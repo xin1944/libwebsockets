@@ -194,7 +194,7 @@ int crypto_sign_ed25519_open(
 	  return -1;
   }
 
-  get_hram(hram,sm,pk,m,smlen);
+  get_hram(hram,sm,pk,m, (size_t)smlen);
 
   sc25519_from64bytes(&schram, hram);
 

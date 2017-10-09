@@ -50,6 +50,18 @@ static const char * const mount_protocols[] = {
 	"callback://"
 };
 
+#if defined(LWS_WITH_HTTP2)
+const struct http2_settings lws_h2_defaults = { {
+	1,
+	/* H2SET_HEADER_TABLE_SIZE */			4096,
+	/* H2SET_ENABLE_PUSH */				   1,
+	/* H2SET_MAX_CONCURRENT_STREAMS */		  24,
+	/* H2SET_INITIAL_WINDOW_SIZE */		       65535,
+	/* H2SET_MAX_FRAME_SIZE */		       16384,
+	/* H2SET_MAX_HEADER_LIST_SIZE */	  	 128,
+}};
+#endif
+
 LWS_VISIBLE void *
 lws_protocol_vh_priv_zalloc(struct lws_vhost *vhost,
 			    const struct lws_protocols *prot, int size)
@@ -268,9 +280,15 @@ lws_callback_http_dummy(struct lws *wsi, enum lws_callback_reasons reason,
 		}
 
 		if (wsi->reason_bf & LWS_CB_REASON_AUX_BF__CGI_CHUNK_END) {
-			lwsl_debug("writing chunk terminator and exiting\n");
-			n = lws_write(wsi, (unsigned char *)"0\x0d\x0a\x0d\x0a",
-				      5, LWS_WRITE_HTTP);
+			if (!wsi->http2_substream) {
+				memcpy(buf + LWS_PRE, "0\x0d\x0a\x0d\x0a", 5);
+				lwsl_debug("writing chunk terminator and exiting\n");
+				n = lws_write(wsi, (unsigned char *)buf + LWS_PRE,
+						5, LWS_WRITE_HTTP);
+			} else
+				n = lws_write(wsi, (unsigned char *)buf + LWS_PRE,
+					      0, LWS_WRITE_HTTP_FINAL);
+
 			/* always close after sending it */
 			return -1;
 		}
@@ -392,7 +410,8 @@ lws_callback_http_dummy(struct lws *wsi, enum lws_callback_reasons reason,
 		lwsl_debug("LWS_CALLBACK_CGI_TERMINATED: %d %" PRIu64 "\n",
 				wsi->cgi->explicitly_chunked,
 				(uint64_t)wsi->cgi->content_length);
-		if (!wsi->cgi->explicitly_chunked && !wsi->cgi->content_length) {
+		if (!wsi->cgi->explicitly_chunked &&
+		    !wsi->cgi->content_length) {
 			/* send terminating chunk */
 			lwsl_debug("LWS_CALLBACK_CGI_TERMINATED: ending\n");
 			wsi->reason_bf |= LWS_CB_REASON_AUX_BF__CGI_CHUNK_END;
@@ -481,6 +500,13 @@ lws_create_vhost(struct lws_context *context,
 		vh->name = "default";
 	else
 		vh->name = info->vhost_name;
+
+#if defined(LWS_WITH_HTTP2)
+	vh->set = context->set;
+	if (info->http2_settings[0])
+		for (n = 1; n < LWS_H2_SETTINGS_LEN; n++)
+			vh->set.s[n] = info->http2_settings[n];
+#endif
 
 	vh->iface = info->iface;
 #if !defined(LWS_WITH_ESP8266) && !defined(LWS_WITH_ESP32) && !defined(OPTEE_TA) && !defined(WIN32)
@@ -788,6 +814,11 @@ lws_create_context(struct lws_context_creation_info *info)
 #if LWS_POSIX
 	lwsl_info(" SYSTEM_RANDOM_FILEPATH: '%s'\n", SYSTEM_RANDOM_FILEPATH);
 #endif
+#if defined(LWS_WITH_HTTP2)
+	lwsl_info(" HTTP2 support         : available\n");
+#else
+	lwsl_info(" HTTP2 support         : not configured");
+#endif
 	if (lws_plat_context_early_init())
 		return NULL;
 
@@ -800,6 +831,10 @@ lws_create_context(struct lws_context_creation_info *info)
 		context->pt_serv_buf_size = info->pt_serv_buf_size;
 	else
 		context->pt_serv_buf_size = 4096;
+
+#if defined(LWS_WITH_HTTP2)
+	context->set = lws_h2_defaults;
+#endif
 
 #if LWS_MAX_SMP > 1
 	pthread_mutex_init(&context->lock, NULL);
@@ -1019,6 +1054,15 @@ lws_create_context(struct lws_context_creation_info *info)
 
 	if (lws_plat_init(context, info))
 		goto bail;
+
+#if defined(LWS_WITH_HTTP2)
+	/*
+	 * let the user code see what the platform default SETTINGS were, he
+	 * can modify them when he creates the vhosts.
+	 */
+	for (n = 1; n < LWS_H2_SETTINGS_LEN; n++)
+		info->http2_settings[n] = context->set.s[n];
+#endif
 
 	lws_context_init_ssl_library(info);
 
