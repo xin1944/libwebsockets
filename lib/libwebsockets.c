@@ -90,6 +90,9 @@ lws_free_wsi(struct lws *wsi)
 	lws_header_table_force_to_detachable_state(wsi);
 	lws_header_table_detach(wsi, 0);
 
+	if (wsi->vhost->lserv_wsi == wsi)
+		wsi->vhost->lserv_wsi = NULL;
+
 	lws_pt_lock(pt);
 	ah = pt->ah_list;
 	while (ah) {
@@ -1650,15 +1653,14 @@ lws_get_reserved_bits(struct lws *wsi)
 int
 lws_ensure_user_space(struct lws *wsi)
 {
-	lwsl_debug("%s: %p protocol %p\n", __func__, wsi, wsi->protocol);
-
 	if (!wsi->protocol)
 		return 0;
 
 	/* allocate the per-connection user memory (if any) */
 
 	if (wsi->protocol->per_session_data_size && !wsi->user_space) {
-		wsi->user_space = lws_zalloc(wsi->protocol->per_session_data_size, "user space");
+		wsi->user_space = lws_zalloc(wsi->protocol->per_session_data_size,
+					     "user space");
 		if (wsi->user_space == NULL) {
 			lwsl_err("%s: OOM\n", __func__);
 			return 1;
@@ -1668,6 +1670,18 @@ lws_ensure_user_space(struct lws *wsi)
 			   wsi, (long)wsi->protocol->per_session_data_size,
 			   wsi->user_space);
 	return 0;
+}
+
+LWS_VISIBLE void *
+lws_adjust_protocol_psds(struct lws *wsi, size_t new_size)
+{
+	((struct lws_protocols *)lws_get_protocol(wsi))->per_session_data_size =
+		new_size;
+
+	if (lws_ensure_user_space(wsi))
+			return NULL;
+
+	return wsi->user_space;
 }
 
 LWS_VISIBLE int

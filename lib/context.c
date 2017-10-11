@@ -501,6 +501,9 @@ lws_create_vhost(struct lws_context *context,
 	else
 		vh->name = info->vhost_name;
 
+	if (info->options & LWS_SERVER_OPTION_ONLY_RAW)
+		lwsl_info("%s set to only support RAW\n", vh->name);
+
 #if defined(LWS_WITH_HTTP2)
 	vh->set = context->set;
 	if (info->http2_settings[0])
@@ -537,9 +540,9 @@ lws_create_vhost(struct lws_context *context,
 	 * give the vhost a unified list of protocols including the
 	 * ones that came from plugins
 	 */
-	lwsp = lws_zalloc(sizeof(struct lws_protocols) *
-				   (vh->count_protocols +
-				   context->plugin_protocol_count + 1), "vhost-specific plugin table");
+	lwsp = lws_zalloc(sizeof(struct lws_protocols) * (vh->count_protocols +
+			  context->plugin_protocol_count + 1),
+			  "vhost-specific plugin table");
 	if (!lwsp) {
 		lwsl_err("OOM\n");
 		return NULL;
@@ -591,7 +594,8 @@ lws_create_vhost(struct lws_context *context,
 	}
 
 	vh->same_vh_protocol_list = (struct lws **)
-			lws_zalloc(sizeof(struct lws *) * vh->count_protocols, "same vh list");
+			lws_zalloc(sizeof(struct lws *) * vh->count_protocols,
+				   "same vh list");
 
 	vh->mount_list = info->mounts;
 
